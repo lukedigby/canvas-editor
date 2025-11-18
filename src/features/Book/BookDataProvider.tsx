@@ -1,11 +1,5 @@
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { createContext, type ReactNode, useContext } from "react";
+import { useWebsocketData } from "../Websockets/useWebsocketData.ts";
 
 export type Bid = [number, number];
 
@@ -14,48 +8,40 @@ type BookData = {
   asks: Array<Bid>;
   mid: number;
 };
-const BookDataProviderContext = createContext<BookData>({
-  bids: [],
-  asks: [],
-  mid: 0,
-});
+
+const DEFAULT_DATA = { bids: [], asks: [], mid: 0 };
+
+const BookDataProviderContext = createContext<BookData>(DEFAULT_DATA);
+
+const ITEM_COUNT = 17;
+function parseBookDataMessage(data: string) {
+  const obj = JSON.parse(data);
+  if (obj && typeof obj === "object" && "bids" in obj && "asks" in obj) {
+    const { bids, asks } = obj;
+    if (
+      Array.isArray(bids) &&
+      bids[0].length === 2 &&
+      Array.isArray(asks) &&
+      asks[0].length === 2
+    ) {
+      return {
+        asks: asks
+          .sort(([a], [b]) => b - a)
+          .slice(bids.length - ITEM_COUNT, bids.length - 1),
+        bids: bids.sort(([a], [b]) => b - a).slice(0, ITEM_COUNT),
+        mid: (Number(asks[asks.length - 1][0]) + Number(bids[0][0])) / 2,
+      };
+    }
+  }
+  return null;
+}
 
 export function BookDataProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<BookData>({ bids: [], asks: [], mid: 0 });
-  const websocketRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    if (!websocketRef.current) {
-      websocketRef.current = new WebSocket(
-        "wss://stream.binance.com:443/ws/btcusdt@depth20",
-      );
-    }
-    const websocket = websocketRef.current;
-    websocket.onopen = () => {
-      websocket.send(
-        JSON.stringify({
-          method: "SUBSCRIBE",
-          params: ["btcusdt@depth20"],
-          id: null,
-        }),
-      );
-    };
-
-    websocket.onmessage = (m) => {
-      const obj = JSON.parse(m.data);
-      if (obj && typeof obj === "object" && "bids" in obj && "asks" in obj) {
-        const { bids, asks } = obj;
-
-        setData({
-          bids: bids.sort(([a], [b]) => b - a),
-          asks: asks.sort(([a], [b]) => b - a),
-          mid: (Number(asks[asks.length - 1][0]) + Number(bids[0][0])) / 2,
-        });
-      }
-    };
-
-    websocket.onerror = (err) => console.error(err);
-  }, []);
+  const data = useWebsocketData<BookData>({
+    stream: "btcusdt@depth20",
+    defaultData: DEFAULT_DATA,
+    parseMessage: parseBookDataMessage,
+  });
 
   return (
     <BookDataProviderContext.Provider value={data}>
